@@ -1,0 +1,90 @@
+# Daily parts-catalog publisher. Lives in the public guitar24t/jlcpcb-parts-catalog
+# repository as .github/workflows/publish-catalog.yml; see contrib/README.md.
+name: Publish parts catalog
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-catalog
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: catalog
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v4
+        with:
+          path: catalog
+
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+        with:
+          repository: guitar24t/jlcpcb_parts_filler
+          # Needed while the plugin repository is private: a fine-grained
+          # token with read-only Contents access to it.
+          token: ${{ secrets.FILLER_REPO_TOKEN || github.token }}
+          path: filler
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      # The build must not lose coverage against what is already published;
+      # that check is what keeps one bad night from replacing a good catalog.
+      - name: Fetch the published catalog
+        run: |
+          mkdir previous
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern catalog.json --dir previous; then
+              asset=$(python3 -c 'import json; print(json.load(open("previous/catalog.json"))["asset"])')
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir previous
+              gunzip -c "previous/$asset" > previous/catalog.sqlite3
+              echo "PREVIOUS=--previous previous/catalog.sqlite3" >> "$GITHUB_ENV"
+            fi
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "JLCPCB parts catalog" \
+              --notes "Every part JLCPCB lists as in stock, rebuilt daily by jlcfiller. catalog.json names the current file and its SHA-256."
+          fi
+
+      - name: Build
+        run: PYTHONPATH=filler/src python3 -m jlcfiller catalog --build out $PREVIOUS
+
+      - name: Publish
+        run: |
+          asset=$(python3 -c 'import json; print(json.load(open("out/catalog.json"))["asset"])')
+          gh release upload "$TAG" "out/$asset" --repo "$GITHUB_REPOSITORY" --clobber
+          # The manifest goes up last, so it never names a file that is not
+          # there yet; the previous file stays one more day for clients that
+          # read the old manifest moments before.
+          gh release upload "$TAG" out/catalog.json --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+            | grep -E '^catalog-[0-9]{8}T[0-9]{6}Z\.sqlite3\.gz$' | sort -r | tail -n +3 \
+            | while read -r old; do
+                gh release delete-asset "$TAG" "$old" --repo "$GITHUB_REPOSITORY" --yes
+              done
+
+      # A record of every build -- and the commit is what keeps GitHub from
+      # disabling this schedule, which it does to public repositories after
+      # 60 days without activity (publishing releases does not count).
+      - name: Record the manifest
+        run: |
+          cp out/catalog.json catalog/catalog.json
+          cd catalog
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add catalog.json
+          git commit -m "Publish $(python3 -c 'import json; print(json.load(open("catalog.json"))["asset"])')"
+          git push
