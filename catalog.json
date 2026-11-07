@@ -1,10 +1,10 @@
 {
-  "asset": "catalog-20261106T130402Z.sqlite3.gz",
-  "created": 1793970242,
+  "asset": "catalog-20261107T114943Z.sqlite3.gz",
+  "created": 1794052183,
   "format": 1,
-  "in_stock": 736972,
-  "parts": 756483,
-  "sha256": "1f84595ac97b8a965b66414817998484f4bd6141c8e602332435ccff2e65424f",
-  "size": 81612642,
-  "unpacked": 567345152
+  "in_stock": 737742,
+  "parts": 756792,
+  "sha256": "42e3c20a5d9979e08684533e9b59c358575260f8e7f39376a98c798115991d8f",
+  "size": 81629742,
+  "unpacked": 567513088
 }
